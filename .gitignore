@@ -1,0 +1,14 @@
+# --- System & IDE Files ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# --- Dependencies (Future Proofing) ---
+vendor/
+node_modules/
+
+# --- User Data: Uploads ---
+uploads/*
+!uploads/.gitkeep
