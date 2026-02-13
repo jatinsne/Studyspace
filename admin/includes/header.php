@@ -134,6 +134,9 @@ $pageName = basename($_SERVER['PHP_SELF']);
                 <a href="users.php" class="<?= $pageName == 'users.php' ? 'text-white' : 'text-zinc-400 hover:text-white' ?> transition">Students</a>
                 <a href="attendance.php" class="<?= $pageName == 'attendance.php' ? 'text-white' : 'text-zinc-400 hover:text-white' ?> transition">Attendance</a>
                 <a href="expenses.php" class="<?= $pageName == 'expenses.php' ? 'text-white' : 'text-zinc-400 hover:text-white' ?> transition">Finance</a>
+                <a href="sync_console.php" class="<?= $pageName == 'sync_console.php' ? 'text-white' : 'text-zinc-400 hover:text-white' ?> transition">
+                    Sync Console
+                </a>
             </div>
 
             <div class="flex items-center gap-4">

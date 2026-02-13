@@ -4,12 +4,17 @@ require_once '../config/Database.php';
 
 $success = null;
 $error = null;
+$triggerSync = false; // Flag to trigger JS worker
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = trim($_POST['name']);
     $email = trim($_POST['email']);
     $phone = trim($_POST['phone']);
     $aadhaar = trim($_POST['aadhaar_number']);
+
+    // Capture Biometric Data
+    $biometric_id = trim($_POST['biometric_id'] ?? '');
+    $card_id = trim($_POST['card_id'] ?? '');
 
     // Default password for walk-ins
     $password = password_hash('123456', PASSWORD_DEFAULT);
@@ -40,20 +45,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     try {
         $pdo = Database::getInstance()->getConnection();
+        $pdo->beginTransaction(); // Start Transaction
 
-        $sql = "INSERT INTO users (name, email, phone, password_hash, role, aadhaar_number, profile_image, doc_proof, verification_status) 
-                VALUES (?, ?, ?, ?, 'student', ?, ?, ?, ?)";
-
+        // 1. INSERT USER
+        $sql = "INSERT INTO users (name, email, phone, password_hash, role, aadhaar_number, profile_image, doc_proof, verification_status, biometric_id, card_id, biometric_enable) 
+        VALUES (?, ?, ?, ?, 'student', ?, ?, ?, ?, ?, ?, 1)";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([$name, $email, $phone, $password, $aadhaar, $profilePath, $docPath, $status]);
+        $stmt->execute([$name, $email, $phone, $password, $aadhaar, $profilePath, $docPath, $status, $biometric_id, $card_id]);
 
-        $success = "Student account created successfully! Default password is '123456'";
+        $newUserId = $pdo->lastInsertId();
 
-        // Clear form data after success
-        $name = $email = $phone = $aadhaar = "";
+        // 2. QUEUE BIOMETRIC SYNC (If Bio ID provided)
+        if (!empty($biometric_id)) {
+            $deviceId = getenv('BIOMETRIC_DEVICE_ID');
+
+            $payloadData = [
+                "device_id" => $deviceId,
+                "cmd_code" => "SetUserData",
+                "params" => [
+                    "UserID" => (int)$biometric_id,
+                    "Type" => "Set",
+                    "Name" => substr($name, 0, 24),
+                    "Privilege" => "User",
+                    "Enabled" => "Yes",
+                    "Card" => (!empty($card_id) ? base64_encode($card_id) : ""),
+                    "UserPeriod_Used" => "No"
+                ]
+            ];
+
+            $jobSql = "INSERT INTO biometric_jobs (biometric_id, command, payload, status, created_at) VALUES (?, 'ADD_USER', ?, 'pending', NOW())";
+            $pdo->prepare($jobSql)->execute([$deviceId, json_encode($payloadData)]);
+
+            $triggerSync = true;
+        }
+
+        $pdo->commit();
+        $success = "Student account created & synced to queue! Default password: '123456'";
+        $name = $email = $phone = $aadhaar = $biometric_id = $card_id = ""; // Clear form
+
     } catch (PDOException $e) {
+        $pdo->rollBack();
         if ($e->getCode() == 23000) {
-            $error = "Email or Phone already exists in the system.";
+            $error = "Error: Email, Phone, Biometric ID, or Card ID already exists.";
         } else {
             $error = "System Error: " . $e->getMessage();
         }
@@ -143,10 +176,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
             </div>
 
+            <div class="bg-zinc-900/50 p-4 rounded-xl border border-zinc-800">
+                <h3 class="text-xs uppercase text-accent font-bold tracking-widest mb-4">Access Control & Biometrics</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-1">Biometric ID</label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-3 text-zinc-600">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.2-2.848.578-4.13m4.474 12.872a3.91 3.91 0 01-1.306-1.558M20.25 15.364c-.64-1.319-1-2.8-1-4.364 0-1.457-.2-2.848-.578-4.13"></path>
+                                </svg>
+                            </span>
+                            <input type="text" name="biometric_id" value="<?= htmlspecialchars($biometric_id ?? '') ?>" placeholder="Fingerprint ID"
+                                class="w-full bg-black border border-zinc-700 p-3 pl-10 rounded-lg text-white focus:border-accent outline-none transition font-mono">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-1">RFID Card ID</label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-3 text-zinc-600">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path>
+                                </svg>
+                            </span>
+                            <input type="text" name="card_id" value="<?= htmlspecialchars($card_id ?? '') ?>" placeholder="Card/Tag ID"
+                                class="w-full bg-black border border-zinc-700 p-3 pl-10 rounded-lg text-white focus:border-accent outline-none transition font-mono">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <hr class="border-zinc-800">
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-
                 <div>
                     <label class="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-1">Profile Photo</label>
                     <div class="relative group">
@@ -184,8 +247,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ← Return to Directory
             </a>
         </div>
-
     </div>
+
+    <?php if ($triggerSync): ?>
+        <script>
+            document.addEventListener("DOMContentLoaded", function() {
+                console.log("Triggering background sync...");
+                fetch('ajax_process_queue.php')
+                    .then(response => response.text())
+                    .then(data => console.log("Sync Worker response:", data))
+                    .catch(err => console.error("Sync Trigger Failed", err));
+            });
+        </script>
+    <?php endif; ?>
 
 </body>
 

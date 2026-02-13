@@ -20,10 +20,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $phone = trim($_POST['phone']);
     $email = trim($_POST['email']);
     $aadhaar = trim($_POST['aadhaar_number']);
-    $status = $_POST['verification_status']; // Admin can verify/reject docs
+    $status = $_POST['verification_status'];
+
+    // Access Fields
+    $bioId = ($_POST['biometric_id']);
+    $cardId = trim($_POST['card_id']);
+    $bioEnable = isset($_POST['biometric_enable']) ? 1 : 0;
+
+    // Subscription Manual Override
+    $subStart = !empty($_POST['subscription_startdate']) ? $_POST['subscription_startdate'] : null;
+    $subEnd = !empty($_POST['subscription_enddate']) ? $_POST['subscription_enddate'] : null;
 
     // -- FILE UPLOAD LOGIC --
-    $uploadDir = '../uploads/'; // Note: Path is relative to admin folder
+    $uploadDir = '../uploads/';
     if (!is_dir($uploadDir)) mkdir($uploadDir, 0777, true);
 
     $profilePath = $user['profile_image'];
@@ -46,14 +55,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $newDoc = handleUpload('doc_proof', $uploadDir);
     if ($newDoc) $docPath = $newDoc;
-    // -----------------------
 
     try {
-        $sql = "UPDATE users SET name=?, phone=?, email=?, aadhaar_number=?, verification_status=?, profile_image=?, doc_proof=? WHERE id=?";
-        $pdo->prepare($sql)->execute([$name, $phone, $email, $aadhaar, $status, $profilePath, $docPath, $id]);
+        // A. UPDATE USER IN DB
+        $sql = "UPDATE users SET 
+                name=?, phone=?, email=?, aadhaar_number=?, verification_status=?, 
+                profile_image=?, doc_proof=?,
+                biometric_id=?, card_id=?, biometric_enable=?,
+                subscription_startdate=?, subscription_enddate=?
+                WHERE id=?";
 
-        // Refresh data to show changes
-        header("Location: user_details.php?id=$id&msg=updated");
+        $pdo->prepare($sql)->execute([
+            $name,
+            $phone,
+            $email,
+            $aadhaar,
+            $status,
+            $profilePath,
+            $docPath,
+            $bioId,
+            $cardId,
+            $bioEnable,
+            $subStart,
+            $subEnd,
+            $id
+        ]);
+
+        // B. QUEUE BIOMETRIC JOB (If Bio ID exists)
+        if (!empty($bioId)) {
+            $deviceId = getenv('BIOMETRIC_DEVICE_ID') ?: 'RSS202508126365';
+
+            // Formula: (Year-2000) << 16 + (Month << 8) + Day
+            function dateToDeviceInt($dateStr)
+            {
+                if (!$dateStr) return 0;
+                $ts = strtotime($dateStr);
+                $year  = (int)date('Y', $ts);
+                $month = (int)date('m', $ts);
+                $day   = (int)date('d', $ts);
+                if ($year < 2000) return 0;
+                return (($year - 2000) << 16) + ($month << 8) + $day;
+            }
+
+            $usePeriod = "No";
+            $pStart = 0;
+            $pEnd = 0;
+
+            // Only enable period if we have valid dates and Access is Enabled
+            if ($bioEnable && $subStart && $subEnd) {
+                $usePeriod = "Yes";
+                $pStart = dateToDeviceInt($subStart);
+                $pEnd = dateToDeviceInt($subEnd);
+            }
+
+            // Prepare Payload
+            $payloadData = [
+                "device_id" => $deviceId,
+                "cmd_code" => "SetUserData",
+                "params" => [
+                    "UserID" => (int)$bioId,
+                    "Type" => "Set",
+                    "Name" => $name,
+                    "Privilege" => "User",
+                    "Enabled" => ($bioEnable ? "Yes" : "No"),
+                    "Card" => (!empty($cardId) ? base64_encode($cardId) : ""),
+                    "UserPeriod_Used" => $usePeriod,
+                    "UserPeriod_Start" => $pStart,
+                    "UserPeriod_End" => $pEnd
+                ]
+            ];
+            $payloadJson = json_encode($payloadData);
+
+            // Queue Job
+            try {
+                $logSql = "INSERT INTO biometric_jobs 
+                           (biometric_id, command, payload, status, created_at) 
+                           VALUES (?, 'ADD_USER', ?, 'pending', NOW())";
+                $pdo->prepare($logSql)->execute([$deviceId, $payloadJson]);
+            } catch (Exception $e) {
+                error_log("Queue Error: " . $e->getMessage());
+            }
+        }
+
+        header("Location: user_details.php?id=$id&msg=updated_queued");
         exit;
     } catch (PDOException $e) {
         $error = "Update failed: " . $e->getMessage();
@@ -85,7 +169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <body class="bg-black text-white p-6 flex justify-center min-h-screen">
 
-    <div class="w-full max-w-3xl bg-surface border border-zinc-900 p-8 rounded-2xl shadow-2xl h-fit">
+    <div class="w-full max-w-4xl bg-surface border border-zinc-900 p-8 rounded-2xl shadow-2xl h-fit">
 
         <div class="flex justify-between items-center mb-8 border-b border-zinc-800 pb-4">
             <div>
@@ -99,7 +183,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="bg-red-900/30 text-red-500 p-4 rounded mb-6 border border-red-900"><?= $error ?></div>
         <?php endif; ?>
 
-        <form method="POST" enctype="multipart/form-data" class="space-y-6">
+        <form method="POST" enctype="multipart/form-data" class="space-y-8">
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
@@ -112,9 +196,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <input type="text" name="phone" value="<?= htmlspecialchars($user['phone']) ?>" required
                         class="w-full bg-black border border-zinc-800 p-3 rounded text-white focus:border-accent outline-none font-mono">
                 </div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                     <label class="block text-xs uppercase text-zinc-500 font-bold mb-2">Email</label>
                     <input type="email" name="email" value="<?= htmlspecialchars($user['email']) ?>"
@@ -125,6 +206,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <input type="text" name="aadhaar_number" value="<?= htmlspecialchars($user['aadhaar_number']) ?>"
                         class="w-full bg-black border border-zinc-800 p-3 rounded text-white focus:border-accent outline-none font-mono tracking-widest">
                 </div>
+            </div>
+
+            <div class="bg-zinc-900/30 border border-zinc-800 p-6 rounded-xl">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-sm font-bold text-accent uppercase tracking-widest">Hardware Access</h3>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" name="biometric_enable" value="1" <?= $user['biometric_enable'] ? 'checked' : '' ?> class="accent-emerald-500 w-4 h-4">
+                        <span class="text-sm font-bold text-zinc-400">Enable Access</span>
+                    </label>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-xs uppercase text-zinc-500 font-bold mb-2">Biometric ID</label>
+                        <input type="text" name="biometric_id" value="<?= htmlspecialchars($user['biometric_id'] ?? '') ?>" placeholder="Fingerprint ID"
+                            class="w-full bg-black border border-zinc-700 p-3 rounded text-white focus:border-accent outline-none font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-xs uppercase text-zinc-500 font-bold mb-2">RFID Card ID</label>
+                        <input type="text" name="card_id" value="<?= htmlspecialchars($user['card_id'] ?? '') ?>" placeholder="Card/Tag ID"
+                            class="w-full bg-black border border-zinc-700 p-3 rounded text-white focus:border-accent outline-none font-mono">
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-zinc-900/30 border border-zinc-800 p-6 rounded-xl">
+                <h3 class="text-sm font-bold text-accent uppercase tracking-widest mb-4">Subscription Override</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-xs uppercase text-zinc-500 font-bold mb-2">Access Start Date</label>
+                        <input type="date" name="subscription_startdate" value="<?= $user['subscription_startdate'] ?>"
+                            class="w-full bg-black border border-zinc-700 p-3 rounded text-white focus:border-accent outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs uppercase text-zinc-500 font-bold mb-2">Access End Date</label>
+                        <input type="date" name="subscription_enddate" value="<?= $user['subscription_enddate'] ?>"
+                            class="w-full bg-black border border-zinc-700 p-3 rounded text-white focus:border-accent outline-none">
+                    </div>
+                </div>
+                <p class="text-[10px] text-zinc-500 mt-2">* These dates are automatically updated by the Subscription system.</p>
             </div>
 
             <div class="bg-zinc-900/50 p-4 rounded-xl border border-zinc-800">
@@ -162,7 +283,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <label class="block text-xs uppercase text-zinc-500 font-bold mb-2">Update ID Proof</label>
                     <div class="bg-zinc-900/30 p-3 rounded-xl border border-zinc-800">
                         <input type="file" name="doc_proof" class="w-full text-xs text-zinc-500 file:mr-2 file:py-1 file:px-3 file:rounded-full file:border-0 file:bg-zinc-800 file:text-white hover:file:bg-zinc-700">
-                        <p class="text-[10px] text-zinc-600 mt-1">Overwrites existing document.</p>
                     </div>
                 </div>
             </div>
@@ -173,6 +293,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         </form>
     </div>
+
+    <script>
+        // document.addEventListener("DOMContentLoaded", function() {
+        //     console.log("Checking sync queue in background...");
+        //     fetch('ajax_process_queue.php')
+        //         .then(response => response.text())
+        //         .then(data => console.log("Sync Worker:", data))
+        //         .catch(err => console.error("Sync Trigger Failed", err));
+        // });
+    </script>
 </body>
 
 </html>
