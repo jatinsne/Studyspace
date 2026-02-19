@@ -48,7 +48,7 @@ class SeatManager
 
         // 1. Fetch Bookings
         $sql = "
-            SELECT s.seat_id, s.payment_status, u.name 
+            SELECT s.seat_id, s.payment_status, u.name, s.due_amount
             FROM subscriptions s
             JOIN shifts sh ON s.shift_id = sh.id
             JOIN users u ON s.user_id = u.id
@@ -64,14 +64,14 @@ class SeatManager
         // 2. Map Status (Use &$seat to modify the actual array)
         foreach ($seats as &$seat) {
             $seatId = $seat['id'];
-            $originalDbStatus = $seat['status']; // Capture DB status (0 or 1) before overwriting
+            $originalDbStatus = $seat['status']; // 0=Maintenance, 1=Active
 
             // Default State
             $seat['status'] = 'available';
             $seat['occupant_name'] = null;
 
-            // Priority 1: Check Maintenance using the captured DB Value
-            if ($originalDbStatus == 0) {
+            // Priority 1: Check Maintenance
+            if ($originalDbStatus === '0' || $originalDbStatus === 0 || $originalDbStatus === 'maintenance') {
                 $seat['status'] = 'maintenance';
             }
             // Priority 2: Check Bookings
@@ -82,6 +82,9 @@ class SeatManager
                     $seat['occupant_name'] = "Reserved";
                 } else {
                     $seat['status'] = 'occupied';
+                    if ($booking['due_amount'] > 0) {
+                        $seat['status'] = 'occupied_due';
+                    }
                     $seat['occupant_name'] = $booking['name'];
                 }
             }
@@ -115,8 +118,16 @@ class SeatManager
             $shift = $this->getShiftById($shiftId);
             if (!$shift) throw new Exception("Invalid Shift");
 
-            $start = date('Y-m-d', strtotime($startDate));
-            $end = date('Y-m-d', strtotime("$startDate +$duration months"));
+            // 2. Calculate Dates (Inclusive)
+            // 2. Calculate Dates (Inclusive) using DateTime
+            $startDt = new DateTime($startDate);
+            $endDt = clone $startDt;
+            $endDt->modify("+$duration months");
+            $endDt->modify("-1 day");
+
+            // FIX: Convert DateTime objects to Strings for MySQL
+            $sqlStart = $startDt->format('Y-m-d');
+            $sqlEnd = $endDt->format('Y-m-d');
 
             // ---------------------------------------------------------
             // 2. CRITICAL: OVERLAP CHECK (Prevent Double Booking)
@@ -128,7 +139,6 @@ class SeatManager
                 AND s.payment_status IN ('paid', 'pending') -- Ignore rejected/expired
                 
                 -- Check 1: Date Range Overlap
-                -- (NewStart <= ExistingEnd) AND (NewEnd >= ExistingStart)
                 AND (? <= s.end_date AND ? >= s.start_date)
                 
                 -- Check 2: Time Overlap (The Golden Rule)
@@ -139,8 +149,8 @@ class SeatManager
             $checkStmt = $this->pdo->prepare($checkSql);
             $checkStmt->execute([
                 $seatId,
-                $start,
-                $end,                 // Date Params
+                $sqlStart,
+                $sqlEnd, // Date Params
                 $shift['start_time'],
                 $shift['end_time'] // Time Params
             ]);
@@ -174,14 +184,21 @@ class SeatManager
 
             // Apply Manual Discount
             $totalDiscount = $discountAmount + floatval($manualDiscount);
-            if ($totalDiscount > $baseAmount) $totalDiscount = $baseAmount;
+            if ($totalDiscount > $baseAmount) $totalDiscount = $baseAmount; // Cap discount
 
             $finalAmount = $baseAmount - $totalDiscount;
 
-            // Determine Status
-            $paidAmount = ($method === 'cash') ? floatval($amountReceived) : 0;
-            // If Cash: Mark 'paid' immediately. If Online: Mark 'pending'.
-            $status = ($method === 'cash') ? 'paid' : 'pending';
+            // 5. Determine Paid & Due
+            // For 'cash', we trust the $amountReceived input.
+            // For 'online', we assume full payment (unless logic changes).
+            $paidAmount = ($method === 'online') ? $finalAmount : floatval($amountReceived);
+            $dueAmount = $finalAmount - $paidAmount;
+            if ($dueAmount < 0) $dueAmount = 0;
+
+            // 6. Set Status
+            // If they paid *anything* (or bill is 0), they are 'paid' (Active).
+            // Only if they paid 0.00 on a bill > 0 are they 'pending'.
+            $status = ($paidAmount > 0 || $finalAmount == 0) ? 'paid' : 'pending';
 
             // 4. Insert Booking
             $sql = "INSERT INTO subscriptions 
@@ -193,8 +210,8 @@ class SeatManager
                 $userId,
                 $seatId,
                 $shiftId,
-                $start,
-                $end,
+                $sqlStart,
+                $sqlEnd,
                 $baseAmount,
                 $manualDiscount,
                 $finalAmount,
@@ -205,6 +222,32 @@ class SeatManager
                 $adminId,
                 $notes
             ]);
+
+            // =================================================================
+            // 8. UPDATE USER MASTER RECORD (For Biometrics/Card Access)
+            // =================================================================
+            if ($status === 'paid') {
+                $updateUser = $this->pdo->prepare("
+                    UPDATE users 
+                    SET subscription_validation_check = 1,
+                        subscription_startdate = CASE 
+                            WHEN subscription_startdate IS NULL THEN ? 
+                            ELSE LEAST(subscription_startdate, ?) 
+                        END,
+                        subscription_enddate = CASE 
+                            WHEN subscription_enddate IS NULL THEN ? 
+                            ELSE GREATEST(subscription_enddate, ?) 
+                        END
+                    WHERE id = ?
+                ");
+                $updateUser->execute([
+                    $sqlStart,
+                    $sqlStart,
+                    $sqlEnd,
+                    $sqlEnd,
+                    $userId
+                ]);
+            }
 
             $this->pdo->commit();
             return ['success' => true, 'message' => 'Booking confirmed'];
