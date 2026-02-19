@@ -11,7 +11,8 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 
 // 2. CONFIGURATION
 $pdo = Database::getInstance()->getConnection();
-$url = getenv('BIOMETRIC_URL');
+$baseUrl = getenv('BIOMETRIC_URL_BASE');
+$url = rtrim($baseUrl, '/') . '/api/command';
 $deviceId = getenv('BIOMETRIC_DEVICE_ID');
 
 if (!$url and !$deviceId) {

@@ -2,6 +2,9 @@
 // 1. Security & Logic
 require_once 'includes/header.php';
 
+// Fetch Device ID from ENV
+$deviceId = getenv('BIOMETRIC_DEVICE_ID') ?: 'Unknown Device';
+
 // 2. Fetch Key Metrics
 
 // A. Lifetime Revenue
@@ -102,10 +105,8 @@ $displayName = $_SESSION['name'] ?? 'Administrator';
             </div>
 
             <div class="relative z-10 space-y-4">
-
                 <button id="btnUnlock" onclick="unlockDoor()" disabled
                     class="group w-full relative overflow-hidden rounded-xl bg-zinc-800 p-5 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-zinc-700 border border-zinc-700/50 shadow-lg">
-
                     <div class="relative flex items-center justify-center gap-3">
                         <div id="lockIconWrapper" class="transition-transform duration-300">
                             <svg class="w-6 h-6 text-zinc-500 group-hover:text-white transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -114,7 +115,6 @@ $displayName = $_SESSION['name'] ?? 'Administrator';
                         </div>
                         <span id="unlockBtnText" class="font-bold text-sm text-zinc-400 group-hover:text-white transition-colors uppercase tracking-wide">Connecting...</span>
                     </div>
-
                     <div id="unlockProgress" class="absolute bottom-0 left-0 h-1 bg-white/20 w-0 transition-all duration-[2000ms]"></div>
                 </button>
 
@@ -123,9 +123,8 @@ $displayName = $_SESSION['name'] ?? 'Administrator';
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                         </svg>
-                        <span id="deviceSerial">RSS-2025</span>
+                        <span id="deviceSerial"><?= htmlspecialchars($deviceId) ?></span>
                     </div>
-
                     <button onclick="checkDeviceStatus()" class="text-[10px] text-zinc-500 hover:text-white flex items-center gap-1.5 transition uppercase font-bold tracking-wider">
                         <svg id="refreshSpin" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
@@ -181,7 +180,7 @@ $displayName = $_SESSION['name'] ?? 'Administrator';
     </div>
 
     <h2 class="text-sm font-bold text-zinc-500 uppercase tracking-widest mb-4 pl-1">System Modules</h2>
-    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4 mb-12">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
 
         <a href="approvals.php" class="group bg-zinc-900/30 border border-zinc-800 p-5 rounded-xl hover:bg-zinc-800 transition hover:border-yellow-500/50">
             <div class="h-8 w-8 bg-yellow-900/20 text-yellow-500 rounded flex items-center justify-center mb-3 group-hover:bg-yellow-500 group-hover:text-black transition">
@@ -237,6 +236,16 @@ $displayName = $_SESSION['name'] ?? 'Administrator';
             <p class="text-[10px] text-zinc-500 mt-1">Operational Costs</p>
         </a>
 
+        <a href="reports.php" class="group bg-zinc-900/30 border border-zinc-800 p-5 rounded-xl hover:bg-zinc-800 transition hover:border-zinc-600">
+            <div class="h-8 w-8 bg-zinc-800 rounded flex items-center justify-center mb-3 group-hover:bg-white group-hover:text-black transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                </svg>
+            </div>
+            <h3 class="font-bold text-white text-sm">Reports</h3>
+            <p class="text-[10px] text-zinc-500 mt-1">Financial Analysis</p>
+        </a>
+
         <a href="users.php" class="group bg-zinc-900/30 border border-zinc-800 p-5 rounded-xl hover:bg-zinc-800 transition hover:border-zinc-600">
             <div class="h-8 w-8 bg-zinc-800 rounded flex items-center justify-center mb-3 group-hover:bg-white group-hover:text-black transition">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -244,7 +253,7 @@ $displayName = $_SESSION['name'] ?? 'Administrator';
                 </svg>
             </div>
             <h3 class="font-bold text-white text-sm">Students</h3>
-            <p class="text-[10px] text-zinc-500 mt-1">Directory</p>
+            <p class="text-[10px] text-zinc-500 mt-1">Directory & Walk-ins</p>
         </a>
 
         <a href="manage_seats.php" class="group bg-zinc-900/30 border border-zinc-800 p-5 rounded-xl hover:bg-zinc-800 transition hover:border-zinc-600">
@@ -257,6 +266,26 @@ $displayName = $_SESSION['name'] ?? 'Administrator';
             <p class="text-[10px] text-zinc-500 mt-1">Asset Mgmt</p>
         </a>
 
+        <a href="attendance.php" class="group bg-zinc-900/30 border border-zinc-800 p-5 rounded-xl hover:bg-zinc-800 transition hover:border-zinc-600">
+            <div class="h-8 w-8 bg-zinc-800 rounded flex items-center justify-center mb-3 group-hover:bg-white group-hover:text-black transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                </svg>
+            </div>
+            <h3 class="font-bold text-white text-sm">Attendance</h3>
+            <p class="text-[10px] text-zinc-500 mt-1">Daily Log</p>
+        </a>
+
+        <a href="coupons.php" class="group bg-zinc-900/30 border border-zinc-800 p-5 rounded-xl hover:bg-zinc-800 transition hover:border-emerald-500/50">
+            <div class="h-8 w-8 bg-zinc-800 rounded flex items-center justify-center mb-3 group-hover:bg-emerald-500 group-hover:text-black transition text-zinc-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
+                </svg>
+            </div>
+            <h3 class="font-bold text-white text-sm group-hover:text-emerald-400 transition">Coupons</h3>
+            <p class="text-[10px] text-zinc-500 mt-1">Manage Discounts</p>
+        </a>
+
         <a href="settings.php" class="group bg-zinc-900/30 border border-zinc-800 p-5 rounded-xl hover:bg-zinc-800 transition hover:border-zinc-600">
             <div class="h-8 w-8 bg-zinc-800 rounded flex items-center justify-center mb-3 group-hover:bg-white group-hover:text-black transition">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -266,6 +295,16 @@ $displayName = $_SESSION['name'] ?? 'Administrator';
             </div>
             <h3 class="font-bold text-white text-sm">Settings</h3>
             <p class="text-[10px] text-zinc-500 mt-1">Config & Pricing</p>
+        </a>
+
+        <a href="issues.php" class="group bg-zinc-900/30 border border-zinc-800 p-5 rounded-xl hover:bg-zinc-800 transition hover:border-zinc-600">
+            <div class="h-8 w-8 bg-zinc-800 rounded flex items-center justify-center mb-3 group-hover:bg-white group-hover:text-black transition text-zinc-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                </svg>
+            </div>
+            <h3 class="font-bold text-white text-sm">Helpdesk</h3>
+            <p class="text-[10px] text-zinc-500 mt-1">Student Complaints</p>
         </a>
 
     </div>

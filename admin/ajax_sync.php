@@ -2,6 +2,8 @@
 require_once '../config/Database.php';
 session_start();
 
+header('Content-Type: application/json');
+
 // 1. SECURITY CHECK
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
     http_response_code(403);
@@ -12,19 +14,7 @@ $pdo = Database::getInstance()->getConnection();
 $action = $_POST['action'] ?? '';
 
 // ---------------------------------------------------------
-// HELPER: DATE CONVERSION
-// ---------------------------------------------------------
-function dateToDeviceInt($dateStr)
-{
-    if (!$dateStr) return 0;
-    $ts = strtotime($dateStr);
-    $year = (int)date('Y', $ts);
-    if ($year < 2000) return 0;
-    return (($year - 2000) << 16) + ((int)date('m', $ts) << 8) + (int)date('d', $ts);
-}
-
-// ---------------------------------------------------------
-// ACTION 1: QUEUE & PUSH (POST)
+// ACTION 1: QUEUE & PUSH SYNC (Instant API Call)
 // ---------------------------------------------------------
 if ($action === 'queue_sync') {
     $userId = $_POST['user_id'] ?? 0;
@@ -35,80 +25,82 @@ if ($action === 'queue_sync') {
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$user || empty($user['biometric_id'])) {
-        exit(json_encode(["status" => "error", "message" => "User has no Biometric ID linked."]));
+        exit(json_encode(["status" => "error", "message" => "User has no Biometric ID linked. Edit profile to add one."]));
     }
 
-    // B. Prepare Payload
-    $usePeriod = ($user['biometric_enable'] && $user['subscription_startdate'] && $user['subscription_enddate']) ? "Yes" : "No";
-    $pStart = dateToDeviceInt($user['subscription_startdate']);
-    $pEnd   = dateToDeviceInt($user['subscription_enddate']);
-    $enabledStatus = ($user['biometric_enable']) ? "Yes" : "No";
+    $bioId = $user['biometric_id'];
+    $deviceId = getenv('BIOMETRIC_DEVICE_ID');
+    $baseUrl = getenv('BIOMETRIC_URL_BASE');
 
-    $payloadData = [
-        "device_id" => getenv('BIOMETRIC_DEVICE_ID') ?: 'RSS202508126365',
-        "cmd_code" => "SetUserData",
-        "params" => [
-            "UserID" => (int)$user['biometric_id'],
-            "Type" => "Set",
-            "Name" => substr($user['name'], 0, 24),
-            "Privilege" => "User",
-            "Enabled" => $enabledStatus,
-            "Card" => (!empty($user['card_id']) ? base64_encode($user['card_id']) : ""),
-            "UserPeriod_Used" => $usePeriod,
-            "UserPeriod_Start" => $pStart,
-            "UserPeriod_End" => $pEnd
-        ]
+    // B. Check Date Limits
+    $validityEnabled = ($user['biometric_enable'] && $user['subscription_startdate'] && $user['subscription_enddate']) ? true : false;
+
+    // C. Prepare Payload for Node.js API
+    $payloadArray = [
+        "name" => substr($user['name'], 0, 24),
+        "card" => $user['card_id'],
+        "enabled" => (bool)$user['biometric_enable'],
+        "validity_enabled" => $validityEnabled
     ];
-    $payloadJson = json_encode($payloadData);
+
+    if ($validityEnabled) {
+        $payloadArray["valid_start"] = $user['subscription_startdate'];
+        $payloadArray["valid_end"] = $user['subscription_enddate'];
+    }
+
+    $directPayload = json_encode($payloadArray);
 
     try {
-        // C. Insert Job
-        $sql = "INSERT INTO biometric_jobs (biometric_id, command, payload, status, created_at) VALUES (?, 'ADD_USER', ?, 'pending', NOW())";
-        $q = $pdo->prepare($sql);
-        $q->execute([$user['biometric_id'], $payloadJson]);
-        $jobId = $pdo->lastInsertId();
+        // D. Execute Instant cURL request to Node API
+        $apiUrl = rtrim($baseUrl, '/') . "/api/device/$deviceId/user/" . urlencode($bioId);
 
-        // D. Immediate Push
-        $deviceUrl = getenv('BIOMETRIC_URL');
-        if ($deviceUrl) {
-            $pdo->prepare("UPDATE biometric_jobs SET status = 'processing' WHERE job_id = ?")->execute([$jobId]);
+        $ch = curl_init();
+        curl_setopt_array($ch, array(
+            CURLOPT_URL => $apiUrl,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_ENCODING => '',
+            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_TIMEOUT => 4, // Fast fail
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_CUSTOMREQUEST => 'PUT',
+            CURLOPT_POSTFIELDS => $directPayload,
+            CURLOPT_HTTPHEADER => array('Content-Type: application/json'),
+        ));
 
-            $ch = curl_init();
-            curl_setopt_array($ch, array(
-                CURLOPT_URL => $deviceUrl,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT => 3,
-                CURLOPT_CUSTOMREQUEST => 'POST',
-                CURLOPT_POSTFIELDS => $payloadJson,
-                CURLOPT_HTTPHEADER => array('Content-Type: application/json'),
-            ));
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err = curl_error($ch);
+        //curl_close($ch);
 
-            $response = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $err = curl_error($ch);
-            //curl_close($ch);
+        $json = json_decode($response, true);
+        $cmdId = $json['command_id'] ?? null;
 
+        // E. Handle Response
+        if ($err || $httpCode >= 400 || (isset($json['success']) && !$json['success'])) {
+            $status = 'failed';
+            $logMsg = $err ? "Conn Error: $err" : "HTTP $httpCode: $response";
+
+            // Log Failure
+            $upd = "INSERT INTO biometric_jobs (biometric_id, device_command_id, command, payload, status, device_response, created_at) VALUES (?, ?, 'SYNC_USER', ?, ?, ?, NOW())";
+            $pdo->prepare($upd)->execute([$deviceId, $cmdId, $directPayload, $status, $logMsg]);
+
+            echo json_encode(["status" => "error", "message" => "Device API rejected request."]);
+        } else {
+            // Success! Node API Queued it. 
+            // We set it to 'processing' and let the Poller handle the final check.
             $status = 'processing';
             $logMsg = $response;
-            $cmdId = null;
 
-            if ($err || $httpCode >= 400) {
-                $status = 'failed';
-                $logMsg = $err ? "Conn Error: $err" : "HTTP $httpCode: $response";
-            } else {
-                $json = json_decode($response, true);
-                $cmdId = $json['command_id'] ?? $json['job_id'] ?? null;
-                // If device confirms immediately
-                if (isset($json['status']) && $json['status'] == 'RESULT') {
-                    $status = ($json['return_code'] == 'OK') ? 'completed' : 'failed';
-                }
-            }
+            // Insert Job so we can poll it
+            $sql = "INSERT INTO biometric_jobs (biometric_id, device_command_id, command, payload, status, device_response, created_at) VALUES (?, ?, 'SYNC_USER', ?, ?, ?, NOW())";
+            $q = $pdo->prepare($sql);
+            $q->execute([$deviceId, $cmdId, $directPayload, $status, $logMsg]);
 
-            $upd = "UPDATE biometric_jobs SET status=?, device_response=?, device_command_id=?, updated_at=NOW() WHERE job_id=?";
-            $pdo->prepare($upd)->execute([$status, $logMsg, $cmdId, $jobId]);
+            $jobId = $pdo->lastInsertId();
+
+            echo json_encode(["status" => "queued", "job_id" => $jobId, "message" => "Sync initiated..."]);
         }
-
-        echo json_encode(["status" => "queued", "job_id" => $jobId, "message" => "Sync initiated..."]);
     } catch (Exception $e) {
         echo json_encode(["status" => "error", "message" => $e->getMessage()]);
     }
@@ -120,7 +112,6 @@ if ($action === 'queue_sync') {
 if ($action === 'check_status') {
     $jobId = $_POST['job_id'] ?? 0;
 
-    // 1. Fetch Current DB Status
     $stmt = $pdo->prepare("SELECT status, device_response, device_command_id FROM biometric_jobs WHERE job_id = ?");
     $stmt->execute([$jobId]);
     $job = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -129,11 +120,11 @@ if ($action === 'check_status') {
         exit(json_encode(["status" => "error", "message" => "Job not found"]));
     }
 
-    // 2. If 'processing' and we have an ID, ACTUALLY CHECK DEVICE
+    // ACTUALLY CHECK DEVICE if still processing
     if ($job['status'] === 'processing' && !empty($job['device_command_id'])) {
 
-        $baseUrl = getenv('BIOMETRIC_URL'); // e.g., localhost:3000/api/command
-        $checkUrl = rtrim($baseUrl, '/') . '/' . $job['device_command_id'];
+        $baseUrl = getenv('BIOMETRIC_URL_BASE');
+        $checkUrl = rtrim($baseUrl, '/') . '/api/command/' . $job['device_command_id'];
 
         $ch = curl_init();
         curl_setopt_array($ch, array(
@@ -150,23 +141,19 @@ if ($action === 'check_status') {
         if ($httpCode >= 200 && $httpCode < 300 && $response) {
             $json = json_decode($response, true);
 
-            // Check if result is available
             if (isset($json['status']) && $json['status'] === 'RESULT') {
-                $newStatus = ($json['return_code'] === 'OK') ? 'completed' : 'failed';
+                $newStatus = (isset($json['return_code']) && $json['return_code'] === 'OK') ? 'completed' : 'failed';
                 $newResponse = json_encode($json['result'] ?? $json);
 
-                // Update DB so we don't have to check again
                 $pdo->prepare("UPDATE biometric_jobs SET status=?, device_response=?, updated_at=NOW() WHERE job_id=?")
                     ->execute([$newStatus, $newResponse, $jobId]);
 
-                // Return updated data
                 $job['status'] = $newStatus;
                 $job['device_response'] = $newResponse;
             }
         }
     }
 
-    // 3. Return Final Status
     echo json_encode([
         "status" => $job['status'],
         "response" => $job['device_response']

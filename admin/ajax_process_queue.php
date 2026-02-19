@@ -11,9 +11,10 @@ if (!isset($_SESSION['user_id'])) {
 
 // 2. CONFIG CHECK
 $pdo = Database::getInstance()->getConnection();
-$apiUrl = getenv('BIOMETRIC_URL');
+$apiUrl = getenv('BIOMETRIC_URL_BASE');
+$commandUrl = rtrim($apiUrl, '/') . '/api/command';
 
-if (empty($apiUrl)) exit("No Device URL set");
+if (empty($commandUrl)) exit("No Device URL set");
 
 // 3. FETCH PENDING JOBS (Batch of 5 to keep it fast)
 $sql = "SELECT * FROM biometric_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 5";
@@ -29,7 +30,7 @@ foreach ($jobs as $job) {
     // B. Send to Device
     $ch = curl_init();
     curl_setopt_array($ch, array(
-        CURLOPT_URL => $apiUrl,
+        CURLOPT_URL => $commandUrl,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT => 4, // Fast timeout for AJAX
         CURLOPT_CUSTOMREQUEST => 'POST',

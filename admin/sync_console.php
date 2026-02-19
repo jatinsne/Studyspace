@@ -6,19 +6,6 @@ require_once 'admin_check.php'; // Ensures valid admin session
 $pdo = Database::getInstance()->getConnection();
 
 // ---------------------------------------------------------
-// HELPER: DATE TO DEVICE INT CONVERSION
-// ---------------------------------------------------------
-function dateToDeviceInt($dateStr)
-{
-    if (!$dateStr) return 0;
-    $ts = strtotime($dateStr);
-    $year = (int)date('Y', $ts);
-    if ($year < 2000) return 0;
-    // Formula: (Year-2000) << 16 + (Month << 8) + Day
-    return (($year - 2000) << 16) + ((int)date('m', $ts) << 8) + (int)date('d', $ts);
-}
-
-// ---------------------------------------------------------
 // ACTION 1: QUEUE ALL ACTIVE USERS
 // ---------------------------------------------------------
 if (isset($_POST['queue_all'])) {
@@ -35,33 +22,24 @@ if (isset($_POST['queue_all'])) {
                 AND subscription_enddate >= CURDATE()";
 
         $users = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
-        $deviceId = getenv('BIOMETRIC_DEVICE_ID') ?: 'RSS202508126365';
         $count = 0;
 
-        $insertSql = "INSERT INTO biometric_jobs (biometric_id, command, payload, status, created_at) VALUES (?, 'ADD_USER', ?, 'pending', NOW())";
+        // Note: Changed command from 'ADD_USER' to 'SYNC_USER' 
+        $insertSql = "INSERT INTO biometric_jobs (biometric_id, command, payload, status, created_at) VALUES (?, 'SYNC_USER', ?, 'pending', NOW())";
         $stmt = $pdo->prepare($insertSql);
 
         foreach ($users as $u) {
-            $pStart = dateToDeviceInt($u['subscription_startdate']);
-            $pEnd   = dateToDeviceInt($u['subscription_enddate']);
-
-            // Construct Exact Device Payload
+            // Simplified Payload mapped to your Node.js PUT route
             $payloadData = [
-                "device_id" => $deviceId,
-                "cmd_code" => "SetUserData",
-                "params" => [
-                    "UserID" => (int)$u['biometric_id'],
-                    "Type" => "Set",
-                    "Name" => substr($u['name'], 0, 24),
-                    "Privilege" => "User",
-                    "Enabled" => "Yes",
-                    "Card" => (!empty($u['card_id']) ? base64_encode($u['card_id']) : ""),
-                    "UserPeriod_Used" => "Yes",
-                    "UserPeriod_Start" => $pStart,
-                    "UserPeriod_End" => $pEnd
-                ]
+                "name" => substr($u['name'], 0, 24),
+                "card" => $u['card_id'],
+                "enabled" => true,
+                "validity_enabled" => true,
+                "valid_start" => $u['subscription_startdate'],
+                "valid_end" => $u['subscription_enddate']
             ];
 
+            // Execute using the user's specific biometric_id
             $stmt->execute([$u['biometric_id'], json_encode($payloadData)]);
             $count++;
         }

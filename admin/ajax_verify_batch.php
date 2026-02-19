@@ -8,7 +8,9 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 }
 
 $pdo = Database::getInstance()->getConnection();
-$baseUrl = getenv('BIOMETRIC_URL');
+
+$baseUrl = getenv('BIOMETRIC_URL_BASE');
+$commandUrl = rtrim($baseUrl, '/') . '/api/command';
 
 // 1. FETCH JOBS THAT NEED VERIFICATION
 // Status must be 'processing' and we must have a Command ID to check
@@ -33,7 +35,7 @@ $completed = 0;
 
 foreach ($jobs as $job) {
     $cmdId = $job['device_command_id'];
-    $checkUrl = rtrim($baseUrl, '/') . '/' . $cmdId; // e.g. .../api/command/698...
+    $checkUrl = $commandUrl . '/' . $job['device_command_id'];
 
     // 2. CURL GET REQUEST (Check Status)
     $ch = curl_init();

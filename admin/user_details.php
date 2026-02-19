@@ -335,22 +335,44 @@ function generateWaLink($booking, $phone, $name)
     </div>
 
 </div>
-
 <script>
+    // --- Alert Handling from Redirects (e.g. edit_user.php) ---
+    const urlParams = new URLSearchParams(window.location.search);
+    const msg = urlParams.get('msg');
+
+    if (msg) {
+        const statusDiv = document.getElementById('syncStatus');
+        statusDiv.classList.remove('hidden');
+
+        if (msg === 'sync_success') {
+            showResult('success', 'Profile & Device Updated!');
+        } else if (msg === 'sync_failed') {
+            showResult('error', 'Profile Updated, Device Sync Failed.');
+        } else if (msg === 'updated_queued') {
+            statusDiv.className = 'text-[10px] text-right mt-1 text-blue-400';
+            statusDiv.innerText = 'Profile Updated & Queued for Sync.';
+        }
+
+        // Clean URL so it doesn't stay on refresh
+        window.history.replaceState({}, document.title, window.location.pathname + "?id=<?= $userId ?>");
+    }
+
+    // --- Sync Now Button Logic ---
     let pollInterval;
 
     function syncToDevice(userId) {
         const btn = document.getElementById('syncBtn');
         const statusDiv = document.getElementById('syncStatus');
 
-        // 1. UI Loading State
+        // UI Loading State
         btn.disabled = true;
-        btn.innerHTML = '<span class="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full"></span> Queueing...';
+        btn.classList.add('opacity-50', 'cursor-not-allowed');
+        btn.innerHTML = '<span class="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full"></span> <span>Queueing...</span>';
+
         statusDiv.classList.remove('hidden');
         statusDiv.className = 'text-[10px] text-right mt-1 text-zinc-400';
         statusDiv.innerText = 'Connecting to server...';
 
-        // 2. Queue the Job
         const formData = new FormData();
         formData.append('action', 'queue_sync');
         formData.append('user_id', userId);
@@ -362,8 +384,7 @@ function generateWaLink($booking, $phone, $name)
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'queued') {
-                    statusDiv.innerText = 'Waiting for device...';
-                    // Start Polling
+                    statusDiv.innerText = 'Waiting for device response...';
                     pollJob(data.job_id);
                 } else {
                     showResult('error', data.message);
@@ -391,13 +412,14 @@ function generateWaLink($booking, $phone, $name)
                         showResult('success', 'Synced Successfully!');
                     } else if (data.status === 'failed') {
                         clearInterval(pollInterval);
-                        showResult('error', 'Sync Failed: ' + data.response);
+                        showResult('error', 'Sync Failed (Check Console)');
+                        console.error("Device Response:", data.response);
                     } else if (data.status === 'processing') {
-                        statusDiv.innerText = 'Device processing...';
-                        statusDiv.className = 'text-[10px] text-right mt-1 text-blue-400 animate-pulse';
+                        statusDiv.innerText = 'Device processing command...';
+                        statusDiv.className = 'text-[10px] text-right mt-1 text-blue-400 animate-pulse font-bold';
                     }
                 });
-        }, 2000); // Check every 2 seconds
+        }, 2000);
     }
 
     function showResult(type, msg) {
@@ -405,24 +427,17 @@ function generateWaLink($booking, $phone, $name)
         const statusDiv = document.getElementById('syncStatus');
 
         btn.disabled = false;
+        btn.classList.remove('opacity-50', 'cursor-not-allowed');
         btn.innerHTML = `
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-        <span>Sync Now</span>
-    `;
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            <span>Sync Now</span>
+        `;
 
         statusDiv.innerText = msg;
         statusDiv.className = type === 'success' ?
             'text-[10px] text-right mt-1 text-emerald-400 font-bold' :
             'text-[10px] text-right mt-1 text-red-500 font-bold';
     }
-
-    // document.addEventListener("DOMContentLoaded", function() {
-    //     console.log("Checking sync queue in background...");
-    //     fetch('ajax_process_queue.php')
-    //         .then(response => response.text())
-    //         .then(data => console.log("Sync Worker:", data))
-    //         .catch(err => console.error("Sync Trigger Failed", err));
-    // });
 </script>
 
 <?php require_once 'includes/footer.php'; ?>

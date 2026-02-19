@@ -10,8 +10,8 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 
 // Configuration
 $deviceId = getenv('BIOMETRIC_DEVICE_ID');
-$url = getenv('BIOMETRIC_URL_BASE');
-$endpoint = "$url/api/device/$deviceId/status";
+$baseUrl = getenv('BIOMETRIC_URL_BASE');
+$endpoint = rtrim($baseUrl, '/') . "/api/device/$deviceId/status";
 
 // Execute cURL (Exactly as provided)
 $curl = curl_init();

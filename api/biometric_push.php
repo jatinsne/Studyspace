@@ -16,6 +16,7 @@ file_put_contents('biometric.log', date('Y-m-d H:i:s') . " " . $json . "\n", FIL
 // 3. VALIDATE INPUT
 if (empty($data['user_id']) || empty($data['timestamp'])) {
     http_response_code(400);
+    file_put_contents('biometric.log', date('Y-m-d H:i:s') . " - Incomplete Data - " . $json . "\n", FILE_APPEND);
     echo json_encode(["result" => "fail", "message" => "Incomplete Data"]);
     exit;
 }
@@ -85,11 +86,13 @@ try {
 
         if (($currentTimestamp - $checkInTimestamp) > 60) {
             $sql = "UPDATE attendance SET check_out_time = ?, device_log = CONCAT(IFNULL(device_log, ''), ?) WHERE id = ?";
-            $pdo->prepare($sql)->execute([$logTime, ' | ' . json_encode($data), $attendance['id']]);
+            $pdo->prepare($sql)->execute([$logTime, json_encode($data), $attendance['id']]);
             $msg = "Check-out Updated";
             $type = "OUT";
+            file_put_contents('biometric.log', date('Y-m-d H:i:s') . " Check-out Updated " . $json . "\n", FILE_APPEND);
         } else {
             $msg = "Duplicate Scan Ignored";
+            file_put_contents('biometric.log', date('Y-m-d H:i:s') . " Duplicate-Scan " . $json . "\n", FILE_APPEND);
             $type = "NONE";
         }
     }
@@ -104,5 +107,6 @@ try {
     ]);
 } catch (PDOException $e) {
     http_response_code(500);
+    file_put_contents('biometric.log', date('Y-m-d H:i:s') . " " . $e->getMessage() . "\n", FILE_APPEND);
     echo json_encode(["result" => "error", "message" => $e->getMessage()]);
 }
