@@ -90,6 +90,12 @@ $headerTitle = "Student Directory";
             </svg>
             Add Student
         </a>
+        <a href="import_users.php" class="group bg-accent text-black hover:bg-yellow-400 px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-300 flex items-center gap-2 shadow-[0_0_15px_rgba(212,177,6,0.2)] hover:shadow-[0_0_25px_rgba(212,177,6,0.4)] hover:-translate-y-0.5">
+            <svg class="w-4 h-4 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+            </svg>
+            Import from Device
+        </a>
     </div>
 
     <div class="bg-surface border border-zinc-900 rounded-xl overflow-hidden shadow-2xl">

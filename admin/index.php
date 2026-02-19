@@ -103,6 +103,14 @@ $displayName = $_SESSION['name'] ?? 'Administrator';
                     <span id="statusLabel" class="text-[10px] font-bold text-zinc-500 tracking-widest">...</span>
                 </div>
             </div>
+            <a href="import_users.php" class="group bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 hover:border-accent/50 text-zinc-400 hover:text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-300 flex items-center gap-2 shadow-lg backdrop-blur-sm">
+                <span class="bg-zinc-800 p-1 rounded-md text-accent group-hover:bg-accent group-hover:text-black transition-colors">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                    </svg>
+                </span>
+                Import Users from Device
+            </a>
 
             <div class="relative z-10 space-y-4">
                 <button id="btnUnlock" onclick="unlockDoor()" disabled
@@ -415,7 +423,7 @@ $displayName = $_SESSION['name'] ?? 'Administrator';
         ui.btnText.innerText = "Device Unreachable";
 
         ui.icon.innerHTML = `<svg class="w-6 h-6 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>`;
-        ui.text.innerText = `Last Seen: ${lastSeen}`;
+        ui.text.innerText = `Last Seen: ${lastSeen ?? 'OFFLINE'}`;
         ui.text.className = "text-[10px] text-red-500/60 font-mono ml-1";
     }
 
